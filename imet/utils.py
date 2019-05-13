@@ -56,9 +56,9 @@ class ThreadingDataLoader(DataLoader):
         return self.dataset[i]
 
 
-def write_event(log, step: int, **data):
+def write_event(log, step: int, lr: float, **data):
     data['step'] = step
-    data['dt'] = datetime.now().isoformat()
+    data['lr'] = lr
     log.write(json.dumps(data, sort_keys=True))
     log.write('\n')
     log.flush()

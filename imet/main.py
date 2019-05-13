@@ -1,6 +1,7 @@
 import argparse
 from itertools import islice
 import json
+import os
 from pathlib import Path
 import shutil
 import warnings
@@ -29,6 +30,7 @@ def main():
     arg('mode', choices=['train', 'validate', 'predict_valid', 'predict_test'])
     arg('run_root')
     arg('--model', default='resnet101')
+    arg('--prev-model', default='none')
     arg('--pretrained', type=int, default = 1)
     arg('--batch-size', type=int, default = 64)
     arg('--step', type=int, default = 1)
@@ -76,6 +78,10 @@ def main():
         (run_root / 'params.json').write_text(
             json.dumps(vars(args), indent=4, sort_keys=True))
 
+        if args.prev_model != 'none':
+            shutil.copy(os.path.join(args.prev_model, 'best-model.pt'), str(run_root))
+            shutil.copy(os.path.join(args.prev_model, 'model.pt'), str(run_root))
+
         train_loader = make_loader(train_fold, train_transform)
         valid_loader = make_loader(valid_fold, test_transform)
         print(f'{len(train_loader.dataset):,} items in train, '
@@ -92,7 +98,7 @@ def main():
             use_cuda=use_cuda,
         )
 
-        if args.pretrained:
+        if args.pretrained and args.prev_model == 'none':
             if train(params=fresh_params, n_epochs=1, **train_kwargs):
                 train(params=all_params, **train_kwargs)
         else:
@@ -210,12 +216,12 @@ def train(args, model: nn.Module, criterion, *, params,
                 mean_loss = np.mean(losses[-report_each:])
                 tq.set_postfix(loss=f'{mean_loss:.3f}')
                 if i and i % report_each == 0:
-                    write_event(log, step, loss=mean_loss)
-            write_event(log, step, loss=mean_loss)
+                    write_event(log, step, lr, loss=mean_loss)
+            write_event(log, step, lr, loss=mean_loss)
             tq.close()
             save(epoch + 1)
             valid_metrics = validation(model, criterion, valid_loader, use_cuda)
-            write_event(log, step, **valid_metrics)
+            write_event(log, step, lr, **valid_metrics)
             valid_loss = valid_metrics['valid_loss']
             valid_losses.append(valid_loss)
             if valid_loss < best_valid_loss:
@@ -266,7 +272,7 @@ def validation(
 
     metrics = {}
     argsorted = all_predictions.argsort(axis=1)
-    for threshold in [0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12]:
+    for threshold in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]:
         metrics[f'valid_f2_th_{threshold:.2f}'] = get_score(
             binarize_prediction(all_predictions, threshold, argsorted))
     metrics['valid_loss'] = np.mean(all_losses)
