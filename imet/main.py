@@ -28,28 +28,25 @@ def main():
     arg = parser.add_argument
     arg('mode', choices=['train', 'validate', 'predict_valid', 'predict_test'])
     arg('run_root')
-    arg('--model', default='resnet50')
-    arg('--pretrained', type=int, default=1)
-    arg('--batch-size', type=int, default=64)
-    arg('--step', type=int, default=1)
-    arg('--workers', type=int, default=2 if ON_KAGGLE else 4)
-    arg('--lr', type=float, default=1e-4)
+    arg('--model', default='resnet101')
+    arg('--pretrained', type=int, default = 1)
+    arg('--batch-size', type=int, default = 64)
+    arg('--step', type=int, default = 1)
+    arg('--workers', type=int, default = 2 if ON_KAGGLE else 4)
+    arg('--lr', type=float, default= 5e-5)
     arg('--patience', type=int, default=4)
     arg('--clean', action='store_true')
     arg('--n-epochs', type=int, default=100)
     arg('--epoch-size', type=int)
-    arg('--tta', type=int, default=4)
-    arg('--use-sample', action='store_true', help='use a sample of the dataset')
+    arg('--tta', type=int, default= 8)
     arg('--debug', action='store_true')
     arg('--limit', type=int)
-    arg('--fold', type=int, default=0)
+    arg('--fold', type=int, default= 5)
     args = parser.parse_args()
 
     run_root = Path(args.run_root)
     folds = pd.read_csv('folds.csv')
-    train_root = DATA_ROOT / ('train_sample' if args.use_sample else 'train')
-    if args.use_sample:
-        folds = folds[folds['Id'].isin(set(get_ids(train_root)))]
+    train_root = DATA_ROOT / 'train'
     train_fold = folds[folds['fold'] != args.fold]
     valid_fold = folds[folds['fold'] == args.fold]
     if args.limit:
@@ -116,15 +113,10 @@ def main():
             workers=args.workers,
         )
         if args.mode == 'predict_valid':
-            predict(model, df=valid_fold, root=train_root,
-                    out_path=run_root / 'val.h5',
-                    **predict_kwargs)
+            predict(model, df=valid_fold, root=train_root, out_path=run_root / 'val.h5', **predict_kwargs)
         elif args.mode == 'predict_test':
-            test_root = DATA_ROOT / (
-                'test_sample' if args.use_sample else 'test')
+            test_root = DATA_ROOT / 'test'
             ss = pd.read_csv(DATA_ROOT / 'sample_submission.csv')
-            if args.use_sample:
-                ss = ss[ss['id'].isin(set(get_ids(test_root)))]
             if args.limit:
                 ss = ss[:args.limit]
             predict(model, df=ss, root=test_root,
@@ -187,7 +179,7 @@ def train(args, model: nn.Module, criterion, *, params,
         'best_valid_loss': best_valid_loss
     }, str(model_path))
 
-    report_each = 10
+    report_each = 10000
     log = run_root.joinpath('train.log').open('at', encoding='utf8')
     valid_losses = []
     lr_reset_epoch = epoch
@@ -274,7 +266,7 @@ def validation(
 
     metrics = {}
     argsorted = all_predictions.argsort(axis=1)
-    for threshold in [0.05, 0.10, 0.15, 0.20]:
+    for threshold in [0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12]:
         metrics[f'valid_f2_th_{threshold:.2f}'] = get_score(
             binarize_prediction(all_predictions, threshold, argsorted))
     metrics['valid_loss'] = np.mean(all_losses)
