@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import warnings
-from typing import Dict
+from typing import Callable, Dict
 
 import numpy as np
 import pandas as pd
@@ -18,10 +18,10 @@ import tqdm
 
 from . import models
 from .dataset import TrainDataset, TTADataset, get_ids, N_CLASSES, DATA_ROOT
-from .transforms import train_transform, test_transform
+from .transforms import get_transforms
 from .utils import (
     write_event, load_model, mean_df, ThreadingDataLoader as DataLoader,
-    ON_KAGGLE)
+    FocalLoss, ON_KAGGLE)
 
 
 def main():
@@ -44,6 +44,12 @@ def main():
     arg('--debug', action='store_true')
     arg('--limit', type=int)
     arg('--fold', type=int, default= 5)
+    arg('--loss', default='bce')
+    arg('--transform', default='original')
+    arg('--image-size', type=int, default=288)
+    arg('--dropout', type=float, default=0)
+    arg('--verbose', type=int, default=0)
+    arg('--smoothing', type=float, default=0)
     args = parser.parse_args()
 
     run_root = Path(args.run_root)
@@ -55,16 +61,26 @@ def main():
         train_fold = train_fold[:args.limit]
         valid_fold = valid_fold[:args.limit]
 
-    def make_loader(df: pd.DataFrame, image_transform) -> DataLoader:
+    def make_loader(df: pd.DataFrame, image_transform, smoothing=0) -> DataLoader:
         return DataLoader(
-            TrainDataset(train_root, df, image_transform, debug=args.debug),
+            TrainDataset(train_root, df, image_transform,
+                         smoothing=smoothing, debug=args.debug),
             shuffle=True,
             batch_size=args.batch_size,
             num_workers=args.workers,
         )
-    criterion = nn.BCEWithLogitsLoss(reduction='none')
+    if args.loss == 'bce':
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+    elif args.loss == 'focal':
+        criterion = FocalLoss(gamma=2.0, alpha=0.25)
+    else:
+        print('invalid loss function')
+        return False
+
+    train_transform, test_transform = get_transforms(args.transform, args.image_size)
+
     model = getattr(models, args.model)(
-        num_classes=N_CLASSES, pretrained=args.pretrained)
+        num_classes=N_CLASSES, pretrained=args.pretrained, dropout=args.dropout)
     use_cuda = cuda.is_available()
     fresh_params = list(model.fresh_params())
     all_params = list(model.parameters())
@@ -82,7 +98,7 @@ def main():
             shutil.copy(os.path.join(args.prev_model, 'best-model.pt'), str(run_root))
             shutil.copy(os.path.join(args.prev_model, 'model.pt'), str(run_root))
 
-        train_loader = make_loader(train_fold, train_transform)
+        train_loader = make_loader(train_fold, train_transform, smoothing=args.smoothing)
         valid_loader = make_loader(valid_fold, test_transform)
         print(f'{len(train_loader.dataset):,} items in train, '
               f'{len(valid_loader.dataset):,} in valid')
@@ -107,7 +123,8 @@ def main():
     elif args.mode == 'validate':
         valid_loader = make_loader(valid_fold, test_transform)
         load_model(model, run_root / 'model.pt')
-        validation(model, criterion, tqdm.tqdm(valid_loader, desc='Validation'),
+        validation(args, model, criterion,
+                   tqdm.tqdm(valid_loader, desc='Validation', disable = not args.verbose),
                    use_cuda=use_cuda)
 
     elif args.mode.startswith('predict'):
@@ -115,25 +132,28 @@ def main():
         predict_kwargs = dict(
             batch_size=args.batch_size,
             tta=args.tta,
+            transform=test_transform,
             use_cuda=use_cuda,
             workers=args.workers,
         )
         if args.mode == 'predict_valid':
-            predict(model, df=valid_fold, root=train_root, out_path=run_root / 'val.h5', **predict_kwargs)
+            predict(args, model, df=valid_fold, root=train_root,
+                    out_path=run_root / 'val.h5', **predict_kwargs)
         elif args.mode == 'predict_test':
             test_root = DATA_ROOT / 'test'
             ss = pd.read_csv(DATA_ROOT / 'sample_submission.csv')
             if args.limit:
                 ss = ss[:args.limit]
-            predict(model, df=ss, root=test_root,
+            predict(args, model, df=ss, root=test_root,
                     out_path=run_root / 'test.h5',
                     **predict_kwargs)
 
 
-def predict(model, root: Path, df: pd.DataFrame, out_path: Path,
-            batch_size: int, tta: int, workers: int, use_cuda: bool):
+def predict(args, model, root: Path, df: pd.DataFrame, out_path: Path,
+            batch_size: int, tta: int, transform: Callable,
+            workers: int, use_cuda: bool):
     loader = DataLoader(
-        dataset=TTADataset(root, df, test_transform, tta=tta),
+        dataset=TTADataset(root, df, transform, tta=tta),
         shuffle=False,
         batch_size=batch_size,
         num_workers=workers,
@@ -141,7 +161,7 @@ def predict(model, root: Path, df: pd.DataFrame, out_path: Path,
     model.eval()
     all_outputs, all_ids = [], []
     with torch.no_grad():
-        for inputs, ids in tqdm.tqdm(loader, desc='Predict'):
+        for inputs, ids in tqdm.tqdm(loader, desc='Predict', disable = not args.verbose):
             if use_cuda:
                 inputs = inputs.cuda()
             outputs = torch.sigmoid(model(inputs))
@@ -191,8 +211,9 @@ def train(args, model: nn.Module, criterion, *, params,
     lr_reset_epoch = epoch
     for epoch in range(epoch, n_epochs + 1):
         model.train()
-        tq = tqdm.tqdm(total=(args.epoch_size or
-                              len(train_loader) * args.batch_size))
+        tq = tqdm.tqdm(
+            total=(args.epoch_size or len(train_loader) * args.batch_size),
+            disable = not args.verbose)
         tq.set_description(f'Epoch {epoch}, lr {lr}')
         losses = []
         tl = train_loader
@@ -216,12 +237,12 @@ def train(args, model: nn.Module, criterion, *, params,
                 mean_loss = np.mean(losses[-report_each:])
                 tq.set_postfix(loss=f'{mean_loss:.3f}')
                 if i and i % report_each == 0:
-                    write_event(log, step, lr, loss=mean_loss)
-            write_event(log, step, lr, loss=mean_loss)
+                    write_event(log, epoch, step, lr, loss=mean_loss)
+            write_event(log, epoch, step, lr, loss=mean_loss)
             tq.close()
             save(epoch + 1)
-            valid_metrics = validation(model, criterion, valid_loader, use_cuda)
-            write_event(log, step, lr, **valid_metrics)
+            valid_metrics = validation(args, model, criterion, valid_loader, use_cuda)
+            write_event(log, epoch, step, lr, **valid_metrics)
             valid_loss = valid_metrics['valid_loss']
             valid_losses.append(valid_loss)
             if valid_loss < best_valid_loss:
@@ -247,7 +268,7 @@ def train(args, model: nn.Module, criterion, *, params,
 
 
 def validation(
-        model: nn.Module, criterion, valid_loader, use_cuda,
+        args, model: nn.Module, criterion, valid_loader, use_cuda,
         ) -> Dict[str, float]:
     model.eval()
     all_losses, all_predictions, all_targets = [], [], []
@@ -272,12 +293,13 @@ def validation(
 
     metrics = {}
     argsorted = all_predictions.argsort(axis=1)
-    for threshold in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]:
+    for threshold in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]:
         metrics[f'valid_f2_th_{threshold:.2f}'] = get_score(
             binarize_prediction(all_predictions, threshold, argsorted))
     metrics['valid_loss'] = np.mean(all_losses)
-    print(' | '.join(f'{k} {v:.3f}' for k, v in sorted(
-        metrics.items(), key=lambda kv: -kv[1])))
+    if args.verbose:
+        print(' | '.join(f'{k} {v:.3f}' for k, v in sorted(
+            metrics.items(), key=lambda kv: -kv[1])))
 
     return metrics
 

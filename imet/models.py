@@ -26,7 +26,7 @@ def create_net(net_cls, pretrained: bool):
 
 class ResNet(nn.Module):
     def __init__(self, num_classes,
-                 pretrained=False, net_cls=M.resnet101, dropout= 0.3):
+                 pretrained=False, net_cls=M.resnet101, dropout=0):
         super().__init__()
         self.net = create_net(net_cls, pretrained=pretrained)
         self.net.avgpool = AvgPool()
