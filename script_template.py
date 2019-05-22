@@ -8,6 +8,7 @@ fold = 0
 n_epochs = 12
 image_size = 288
 batch_size = 32
+step_size = 1
 lr = 5e-5
 dropout = 0
 smoothing = 0
@@ -36,8 +37,8 @@ def run(command):
 
 run('python setup.py develop --install-dir /kaggle/working')
 run('python -m imet.make_folds')
-run('python -m imet.main train model_1 --model {} --dropout {} --image-size {} --batch-size {} --n-epochs {} --fold {} --smoothing {} --tta {} --patience {} --lr {} --loss {} --transform {} --prev-model {}'.format(
-    model, dropout, image_size, batch_size, n_epochs, fold, smoothing, tta, patience, lr, loss, transform, prev_model))
+run('python -m imet.main train model_1 --model {} --dropout {} --image-size {} --batch-size {} --step {} --n-epochs {} --fold {} --smoothing {} --tta {} --patience {} --lr {} --loss {} --transform {} --prev-model {}'.format(
+    model, dropout, image_size, batch_size, step_size, n_epochs, fold, smoothing, tta, patience, lr, loss, transform, prev_model))
 run('python -m imet.main predict_test model_1 --model {} --dropout {} --image-size {} --batch-size {} --tta {} --transform {}'.format(
     model, dropout, image_size, batch_size, tta, transform))
 run('python -m imet.make_submission model_1/test.h5 submission.csv --threshold {}'.format(thresh))

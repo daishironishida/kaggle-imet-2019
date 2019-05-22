@@ -86,6 +86,10 @@ def get_transforms(transform_type, image_size):
             RandomHorizontalFlip(),
         ])
 
+    elif transform_type == 'variable_size':
+        train_transform = RandomHorizontalFlip()
+        test_transform = RandomHorizontalFlip()
+
     else:
         train_transform = Compose([
             RandomCrop(image_size),
