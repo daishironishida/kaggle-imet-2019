@@ -50,6 +50,7 @@ def main():
     arg('--dropout', type=float, default=0)
     arg('--verbose', type=int, default=0)
     arg('--smoothing', type=float, default=0)
+    arg('--metric', default='loss')
     args = parser.parse_args()
 
     run_root = Path(args.run_root)
@@ -243,7 +244,10 @@ def train(args, model: nn.Module, criterion, *, params,
             save(epoch + 1)
             valid_metrics = validation(args, model, criterion, valid_loader, use_cuda)
             write_event(log, epoch, step, lr, **valid_metrics)
-            valid_loss = valid_metrics['valid_loss']
+            if args.metric == 'best_f2':
+                valid_loss = -valid_metrics['valid_max_f2']
+            else:
+                valid_loss = valid_metrics['valid_loss']
             valid_losses.append(valid_loss)
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
@@ -293,9 +297,16 @@ def validation(
 
     metrics = {}
     argsorted = all_predictions.argsort(axis=1)
-    for threshold in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]:
+    if args.loss == 'bce':
+        threshs = [0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12]
+    elif args.loss == 'focal':
+        threshs = [0.20, 0.22, 0.24, 0.26, 0.28, 0.30, 0.32, 0.34]
+    else:
+        threshs = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
+    for threshold in threshs:
         metrics[f'valid_f2_th_{threshold:.2f}'] = get_score(
             binarize_prediction(all_predictions, threshold, argsorted))
+    metrics['valid_max_f2'] = max(metrics.values())
     metrics['valid_loss'] = np.mean(all_losses)
     if args.verbose:
         print(' | '.join(f'{k} {v:.3f}' for k, v in sorted(
