@@ -13,7 +13,7 @@ from sklearn.metrics import fbeta_score
 from sklearn.exceptions import UndefinedMetricWarning
 import torch
 from torch import nn, cuda
-from torch.optim import Adam
+from torch.optim import Adam, SGD, lr_scheduler
 import tqdm
 
 from . import models
@@ -51,6 +51,9 @@ def main():
     arg('--verbose', type=int, default=0)
     arg('--smoothing', type=float, default=0)
     arg('--metric', default='loss')
+    arg('--optim', default='adam')
+    arg('--scheduler', default='none')
+    arg('--schedule-length', type=int, default=0)
     args = parser.parse_args()
 
     run_root = Path(args.run_root)
@@ -104,6 +107,11 @@ def main():
         print(f'{len(train_loader.dataset):,} items in train, '
               f'{len(valid_loader.dataset):,} in valid')
 
+        if args.optim == 'sgd':
+            init_optimizer = lambda params, lr: SGD(params, lr) # no momentum
+        else:
+            init_optimizer = lambda params, lr: Adam(params, lr)
+
         train_kwargs = dict(
             args=args,
             model=model,
@@ -111,7 +119,7 @@ def main():
             train_loader=train_loader,
             valid_loader=valid_loader,
             patience=args.patience,
-            init_optimizer=lambda params, lr: Adam(params, lr),
+            init_optimizer=init_optimizer,
             use_cuda=use_cuda,
         )
 
@@ -199,6 +207,29 @@ def train(args, model: nn.Module, criterion, *, params,
         best_valid_loss = float('inf')
     lr_changes = 0
 
+    if args.scheduler != 'none':
+
+        slope = 0.9 / args.schedule_length
+
+        if args.scheduler == 'one_cycle':
+
+            def lr_func(_):
+                if step < args.schedule_length:
+                    return slope * step + 0.1
+                elif step <= args.schedule_length * 2:
+                    return slope * (args.schedule_length - step) + 1
+                else:
+                    return 0.1 * slope * (2 * args.schedule_length - step) + 0.1
+
+        elif args.scheduler == 'linear':
+
+            step_first = step
+            def lr_func(_):
+                return -slope * (step - step_first) + 1
+
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_func)
+        lr = optimizer.param_groups[0]['lr']
+
     save = lambda ep: torch.save({
         'model': model.state_dict(),
         'epoch': ep,
@@ -215,7 +246,7 @@ def train(args, model: nn.Module, criterion, *, params,
         tq = tqdm.tqdm(
             total=(args.epoch_size or len(train_loader) * args.batch_size),
             disable = not args.verbose)
-        tq.set_description(f'Epoch {epoch}, lr {lr}')
+        tq.set_description(f'Epoch {epoch}, lr {lr:.3g}')
         losses = []
         tl = train_loader
         if args.epoch_size:
@@ -233,6 +264,9 @@ def train(args, model: nn.Module, criterion, *, params,
                     optimizer.step()
                     optimizer.zero_grad()
                     step += 1
+                    if args.scheduler != 'none':
+                        scheduler.step()
+                        lr = optimizer.param_groups[0]['lr']
                 tq.update(batch_size)
                 losses.append(loss.item())
                 mean_loss = np.mean(losses[-report_each:])
@@ -253,7 +287,8 @@ def train(args, model: nn.Module, criterion, *, params,
                 best_valid_loss = valid_loss
                 shutil.copy(str(model_path), str(best_model_path))
             elif (patience and epoch - lr_reset_epoch > patience and
-                  min(valid_losses[-patience:]) > best_valid_loss):
+                  min(valid_losses[-patience:]) > best_valid_loss and
+                  args.scheduler == 'none'):
                 # "patience" epochs without improvement
                 lr_changes +=1
                 if lr_changes > max_lr_changes:

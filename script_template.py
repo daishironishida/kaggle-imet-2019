@@ -18,6 +18,9 @@ model = "resnet152"
 loss = "bce"
 transform = "original"
 metric = "best_f2"
+optim = "adam"
+scheduler = "none"
+schedule_length = 0
 prev_model = "none"
 thresh = 0.1
 
@@ -38,8 +41,8 @@ def run(command):
 
 run('python setup.py develop --install-dir /kaggle/working')
 run('python -m imet.make_folds')
-run('python -m imet.main train model_1 --model {} --dropout {} --image-size {} --batch-size {} --step {} --n-epochs {} --fold {} --smoothing {} --tta {} --patience {} --lr {} --loss {} --transform {} --metric {} --prev-model {}'.format(
-    model, dropout, image_size, batch_size, step_size, n_epochs, fold, smoothing, tta, patience, lr, loss, transform, metric, prev_model))
+run('python -m imet.main train model_1 --model {} --dropout {} --image-size {} --batch-size {} --step {} --n-epochs {} --fold {} --smoothing {} --tta {} --patience {} --lr {} --loss {} --transform {} --metric {} --optim {} --scheduler {} --schedule-length {} --prev-model {}'.format(
+    model, dropout, image_size, batch_size, step_size, n_epochs, fold, smoothing, tta, patience, lr, loss, transform, metric, optim, scheduler, schedule_length, prev_model))
 run('python -m imet.main predict_test model_1 --model {} --dropout {} --image-size {} --batch-size {} --tta {} --transform {}'.format(
     model, dropout, image_size, batch_size, tta, transform))
 run('python -m imet.make_submission model_1/test.h5 submission.csv --threshold {}'.format(thresh))
