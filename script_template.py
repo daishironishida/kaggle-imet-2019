@@ -4,6 +4,25 @@ import os
 from pathlib import Path
 from typing import Dict
 
+fold = 0
+n_epochs = 12
+image_size = 288
+batch_size = 32
+step_size = 1
+lr = 5e-5
+dropout = 0
+smoothing = 0
+tta = 8
+patience = 2
+model = "resnet152"
+loss = "bce"
+transform = "original"
+metric = "best_f2"
+optim = "adam"
+scheduler = "none"
+schedule_length = 0
+prev_model = "none"
+thresh = 0.1
 
 # this is base64 encoded source code
 file_data: Dict = {file_data}
@@ -22,6 +41,8 @@ def run(command):
 
 run('python setup.py develop --install-dir /kaggle/working')
 run('python -m imet.make_folds')
-run('python -m imet.main train model_1 --n-epochs 25')
-run('python -m imet.main predict_test model_1')
-run('python -m imet.make_submission model_1/test.h5 submission.csv --threshold 0.1')
+run('python -m imet.main train model_1 --model {} --dropout {} --image-size {} --batch-size {} --step {} --n-epochs {} --fold {} --smoothing {} --tta {} --patience {} --lr {} --loss {} --transform {} --metric {} --optim {} --scheduler {} --schedule-length {} --prev-model {}'.format(
+    model, dropout, image_size, batch_size, step_size, n_epochs, fold, smoothing, tta, patience, lr, loss, transform, metric, optim, scheduler, schedule_length, prev_model))
+run('python -m imet.main predict_test model_1 --model {} --dropout {} --image-size {} --batch-size {} --tta {} --transform {}'.format(
+    model, dropout, image_size, batch_size, tta, transform))
+run('python -m imet.make_submission model_1/test.h5 submission.csv --threshold {}'.format(thresh))

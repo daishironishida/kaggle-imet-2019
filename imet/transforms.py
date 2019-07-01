@@ -1,68 +1,107 @@
 import random
 import math
 
-from PIL import Image
+from PIL import Image, ImageOps
 from torchvision.transforms import (
     ToTensor, Normalize, Compose, Resize, CenterCrop, RandomCrop,
-    RandomHorizontalFlip)
+    RandomHorizontalFlip, RandomResizedCrop, ColorJitter, Pad)
 
 
-class RandomSizedCrop:
-    """Random crop the given PIL.Image to a random size
-    of the original size and and a random aspect ratio
-    of the original aspect ratio.
-    size: size of the smaller edge
-    interpolation: Default: PIL.Image.BILINEAR
-    """
-
-    def __init__(self, size, interpolation=Image.BILINEAR,
-                 min_aspect=4/5, max_aspect=5/4,
-                 min_area=0.25, max_area=1):
-        self.size = size
-        self.interpolation = interpolation
-        self.min_aspect = min_aspect
-        self.max_aspect = max_aspect
-        self.min_area = min_area
-        self.max_area = max_area
+class SquarePad(object):
+    def __init__(self):
+        pass
 
     def __call__(self, img):
-        for attempt in range(10):
-            area = img.size[0] * img.size[1]
-            target_area = random.uniform(self.min_area, self.max_area) * area
-            aspect_ratio = random.uniform(self.min_aspect, self.max_aspect)
+        w, h = img.size
+        extra = int((w-h) % 2)
 
-            w = int(round(math.sqrt(target_area * aspect_ratio)))
-            h = int(round(math.sqrt(target_area / aspect_ratio)))
+        if w>h:
+            padding=(0, (w-h)//2 + extra, 0, (w-h)//2)
+        else:
+            padding=((h-w)//2 + extra, 0, (h-w)//2, 0)
+        return ImageOps.expand(img, padding)
 
-            if random.random() < 0.5:
-                w, h = h, w
+def get_transforms(transform_type, image_size):
+    if transform_type == 'pad':
+        train_transform = Compose([
+            ColorJitter(),
+            RandomHorizontalFlip(p=0.5),
+            SquarePad(),
+            Resize(image_size)
+        ])
 
-            if w <= img.size[0] and h <= img.size[1]:
-                x1 = random.randint(0, img.size[0] - w)
-                y1 = random.randint(0, img.size[1] - h)
+        test_transform = Compose([
+            SquarePad(),
+            Resize(image_size)
+        ])
 
-                img = img.crop((x1, y1, x1 + w, y1 + h))
-                assert(img.size == (w, h))
+    elif transform_type == 'pad_tta':
+        train_transform = Compose([
+            ColorJitter(),
+            RandomHorizontalFlip(p=0.5),
+            SquarePad(),
+            Resize(image_size)
+        ])
 
-                return img.resize((self.size, self.size), self.interpolation)
+        test_transform = Compose([
+            RandomHorizontalFlip(p=0.5),
+            SquarePad(),
+            Resize(image_size)
+        ])
 
-        # Fallback
-        scale = Resize(self.size, interpolation=self.interpolation)
-        crop = CenterCrop(self.size)
-        return crop(scale(img))
+    elif transform_type == 'crop':
+        train_transform = Compose([
+            ColorJitter(),
+            RandomHorizontalFlip(p=0.5),
+            RandomResizedCrop(image_size, scale=(0.7, 1.0))
+        ])
 
+        test_transform = Compose([
+            Resize(360),
+            CenterCrop((image_size, image_size))
+        ])
 
-train_transform = Compose([
-    RandomCrop(288),
-    RandomHorizontalFlip(),
-])
+    elif transform_type == 'crop_tta':
+        train_transform = Compose([
+            ColorJitter(),
+            RandomHorizontalFlip(p=0.5),
+            RandomResizedCrop(image_size, scale=(0.7, 1.0))
+        ])
 
+        test_transform = Compose([
+            RandomHorizontalFlip(p=0.5),
+            RandomResizedCrop(image_size, scale=(0.7, 1.0))
+        ])
 
-test_transform = Compose([
-    RandomCrop(288),
-    RandomHorizontalFlip(),
-])
+    elif transform_type == 'resize_crop':
+        train_transform = Compose([
+            Resize(image_size),
+            RandomCrop(image_size),
+            RandomHorizontalFlip(),
+        ])
 
+        test_transform = Compose([
+            Resize(image_size),
+            RandomCrop(image_size),
+            RandomHorizontalFlip(),
+        ])
+
+    elif transform_type == 'variable_size':
+        train_transform = RandomHorizontalFlip()
+        test_transform = RandomHorizontalFlip()
+
+    else:
+        train_transform = Compose([
+            RandomCrop(image_size),
+            RandomHorizontalFlip(),
+        ])
+
+        test_transform = Compose([
+            RandomCrop(image_size),
+            RandomHorizontalFlip(),
+        ])
+
+    return train_transform, test_transform
 
 tensor_transform = Compose([
     ToTensor(),

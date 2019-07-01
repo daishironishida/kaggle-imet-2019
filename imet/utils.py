@@ -17,6 +17,23 @@ from torch.utils.data import DataLoader
 ON_KAGGLE: bool = 'KAGGLE_WORKING_DIR' in os.environ
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=0, alpha=1, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.size_average = size_average
+
+    def forward(self, input, target):
+        input = torch.sigmoid(input)
+        pt = input * target + (1-input) * (1-target)
+        pt = torch.clamp(pt, 1e-5, 1-1e-5)
+        CE = -torch.log(pt)
+        FL = (1-pt)**self.gamma * CE
+        loss = torch.sum(FL, 1)
+        return loss
+
+
 def gmean_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby(level=0).agg(lambda x: gmean(list(x)))
 
@@ -56,9 +73,10 @@ class ThreadingDataLoader(DataLoader):
         return self.dataset[i]
 
 
-def write_event(log, step: int, **data):
+def write_event(log, epoch: int, step: int, lr: float, **data):
+    data['epoch'] = epoch
     data['step'] = step
-    data['dt'] = datetime.now().isoformat()
+    data['lr'] = lr
     log.write(json.dumps(data, sort_keys=True))
     log.write('\n')
     log.flush()
