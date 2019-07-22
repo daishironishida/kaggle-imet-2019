@@ -1,3 +1,5 @@
+Based on: https://github.com/lopuhin/kaggle-imet-2019
+
 iMet Collection 2019 - FGVC6
 ============================
 
